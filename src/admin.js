@@ -28,9 +28,64 @@ function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === "";
 }
 
+/**
+ * A username derived from the address.
+ *
+ * Readable for the common case — `ralph@rhet-corp.com` becomes `ralph` — and
+ * unique when it has to be. A local part is not unique: `john@a.example` and
+ * `john@b.example` both reduce to `john`, and two people at different schools
+ * routinely share a first name. On a collision the domain is appended, so the
+ * second address still gets a username rather than failing with "this field
+ * must be unique".
+ *
+ * The suffix comes from the address, not a random value, so the same input
+ * always produces the same username and a re-run does not create a second
+ * account.
+ */
 function usernameFor(email) {
   const local = email.includes("@") ? email.slice(0, email.indexOf("@")) : email;
   return local.toLowerCase().replace(/[^a-z0-9._-]/g, "-");
+}
+
+/** A slug for a domain: alphanumeric only, so `@b.example` becomes `bexample`. */
+function domainSlug(email) {
+  const at = email.indexOf("@");
+  if (at === -1) return "";
+
+  return email.slice(at + 1).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Usernames to try, in order of preference. */
+function usernameAttempts(candidate) {
+  const preferred = candidate.username;
+  const domain = domainSlug(candidate.email);
+  const qualified = domain === "" ? preferred : `${preferred}-${domain}`;
+
+  return [...new Set([preferred, qualified, `${preferred}-${digest(candidate.email)}`])];
+}
+
+/** A short, stable digest. Crypto when available, a simple hash otherwise. */
+function digest(value) {
+  try {
+    // eslint-disable-next-line no-undef
+    const { createHash } = require("node:crypto");
+    return createHash("sha256").update(value).digest("hex").slice(0, 8);
+  } catch {
+    let hash = 0;
+    for (const char of value) {
+      hash = (hash * 31 + char.charCodeAt(0)) % 0xffffffff;
+    }
+    return hash.toString(16).padStart(8, "0");
+  }
+}
+
+/** Does authentik report the username, rather than something else, as taken? */
+function usernameIsTaken(body) {
+  const message = body?.username;
+  if (!message) return false;
+  const text = Array.isArray(message) ? message.join(" ") : String(message);
+
+  return /unique|exists/i.test(text);
 }
 
 /**
@@ -180,26 +235,44 @@ export function createAuthentikAdminClient(options = {}) {
     return created.body;
   }
 
+  /**
+   * Create the user, resolving a username that is already taken.
+   *
+   * authentik's usernames are globally unique, and a local part is not, so the
+   * name is retried with the domain appended rather than reporting the second
+   * John as a failure.
+   */
   async function createUser(candidate) {
-    const { status, body } = await request("POST", "/api/v3/core/users/", {
-      body: {
-        username: candidate.username,
-        email: candidate.email,
-        name: candidate.name,
-        is_active: true,
-        path: "users",
-      },
-    });
+    let lastError = null;
 
-    if (status !== 200 && status !== 201) {
-      throw new AuthentikImportError(
-        `Could not create ${candidate.email}: HTTP ${status} ${summarise(body)}`,
-      );
+    for (const username of usernameAttempts(candidate)) {
+      const { status, body } = await request("POST", "/api/v3/core/users/", {
+        body: {
+          username,
+          email: candidate.email,
+          name: candidate.name,
+          is_active: true,
+          path: "users",
+        },
+      });
+
+      if (status === 200 || status === 201) {
+        if (!body?.pk) {
+          throw new AuthentikImportError(
+            `authentik accepted ${candidate.email} but returned no user`,
+          );
+        }
+        return body;
+      }
+
+      lastError = `${status} ${summarise(body)}`;
+
+      // Only a taken username is worth retrying. Anything else — a malformed
+      // address, a permissions problem — will fail again.
+      if (!usernameIsTaken(body)) break;
     }
-    if (!body?.pk) {
-      throw new AuthentikImportError(`authentik accepted ${candidate.email} but returned no user`);
-    }
-    return body;
+
+    throw new AuthentikImportError(`Could not create ${candidate.email}: HTTP ${lastError}`);
   }
 
   /**

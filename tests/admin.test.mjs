@@ -234,6 +234,77 @@ describe("import", () => {
     assert.equal(result.summary.created, 0);
     assert.equal(result.summary["group additions"], 0);
   });
+
+  it("resolves a username collision instead of failing the second user", async () => {
+    // A local part is not unique: two people at different schools both called
+    // John produce the same derived username. authentik's are globally unique,
+    // so the second must be qualified rather than reported as a failure.
+    const created = [];
+    const fetchImpl = async (url, init = {}) => {
+      const href = String(url);
+      const body = init.body ? JSON.parse(init.body) : null;
+      const method = init.method ?? "GET";
+
+      if (method === "PATCH") {
+        return { status: 200, text: async () => JSON.stringify({ pk: "g", name: "app", users: body.users }) };
+      }
+      if (method === "GET" && href.includes("/groups/?")) {
+        return { status: 200, text: async () => JSON.stringify({ results: [{ pk: "g", name: "app", users: [] }] }) };
+      }
+      if (method === "POST" && href.endsWith("/groups/")) {
+        return { status: 201, text: async () => JSON.stringify({ pk: "g", name: "app", users: [] }) };
+      }
+      if (method === "POST" && href.includes("/users/")) {
+        if (created.includes(body.username)) {
+          return { status: 400, text: async () => JSON.stringify({ username: ["This field must be unique."] }) };
+        }
+        created.push(body.username);
+        return { status: 201, text: async () => JSON.stringify({ pk: created.length }) };
+      }
+      return { status: 200, text: async () => JSON.stringify({ results: [] }) };
+    };
+
+    const client = createAuthentikAdminClient({ ...VALID, fetch: fetchImpl });
+    const result = await client.import([
+      { email: "john@a.example.com" },
+      { email: "john@b.example.com" },
+    ]);
+
+    assert.equal(result.summary.created, 2, "the second user was not created");
+    assert.equal(result.summary.failed, 0);
+    assert.deepEqual(created, ["john", "john-bexamplecom"]);
+  });
+
+  it("does not retry when the failure is not a taken username", async () => {
+    // Retrying a malformed address or a permissions problem would just fail
+    // again, and would hide the real error.
+    let attempts = 0;
+    const fetchImpl = async (url, init = {}) => {
+      const href = String(url);
+      const method = init.method ?? "GET";
+      if (method === "PATCH") {
+        return { status: 200, text: async () => JSON.stringify({ pk: "g", name: "app", users: body.users }) };
+      }
+      if (method === "GET" && href.includes("/groups/?")) {
+        return { status: 200, text: async () => JSON.stringify({ results: [{ pk: "g", name: "app", users: [] }] }) };
+      }
+      if (method === "POST" && href.endsWith("/groups/")) {
+        return { status: 201, text: async () => JSON.stringify({ pk: "g", name: "app", users: [] }) };
+      }
+      if (method === "POST" && href.includes("/users/")) {
+        attempts += 1;
+        return { status: 400, text: async () => JSON.stringify({ email: ["Enter a valid email address."] }) };
+      }
+      return { status: 200, text: async () => JSON.stringify({ results: [] }) };
+    };
+
+    const client = createAuthentikAdminClient({ ...VALID, fetch: fetchImpl });
+    const result = await client.import([{ email: "alex@example.com" }]);
+
+    assert.equal(result.summary.failed, 1);
+    assert.equal(attempts, 1, "a non-username failure was retried");
+    assert.match(result.results[0].error, /valid email/);
+  });
 });
 
 describe("AuthentikImportError", () => {
