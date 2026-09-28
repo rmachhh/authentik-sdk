@@ -55,22 +55,25 @@ npm install /path/to/authentik-sdk-0.1.0.tgz
 Commit the `.tgz` to a shared `vendor/` folder if the applications do not share
 a network. This is the most portable option and needs no credentials.
 
-### 3. From the private Git repository
+### 3. From the public Git repository (recommended)
 
-The repository is private, so the install needs a credential — an SSH key or a
-token. Tarball installs above avoid that entirely.
+The package lives at
+[github.com/rmachhh/authentik-sdk](https://github.com/rmachhh/authentik-sdk)
+and is public, so no credential is needed:
 
 ```bash
-npm install git+ssh://git@github.com/rmachhh/authentik-sdk.git
+npm install github:rmachhh/authentik-sdk
 ```
 
-Do **not** use `git+https://` without a token on a private repository: it fails
-with `404`, which reads like a missing package rather than an authentication
-problem.
+In a `package.json`, so updates are explicit:
 
-If you want an install straight from the subdirectory rather than the whole
-repository, give the SDK its own repository. npm cannot install a package from a
-subdirectory of a git repo.
+```json
+{ "dependencies": { "authentik-sdk": "github:rmachhh/authentik-sdk#v0.1.0" } }
+```
+
+Tag a release in the repository (`git tag v0.1.0 && git push --tags`) and pin to
+the tag rather than `main`, so an unrelated commit cannot change what your
+applications install.
 
 ### 4. A registry (best once three or more apps consume it)
 
