@@ -249,6 +249,60 @@ That is the whole integration. Two endpoints and one access check.
 | `completeLogin()` | State, nonce and PKCE validated; flow state cleared first, so it cannot be replayed |
 | `access.check()` | Returns `{ allowed, groups }`; fails closed when no group is configured |
 
+### Several instances (failover)
+
+If the first authentik is unreachable, the next is tried. Configuration errors
+are **not** failed over — a typo should not look like an outage.
+
+```js
+const auth = createAuthentikClient({
+  instances: [
+    {
+      label: "primary",
+      issuer: "https://id.example.com/application/o/records/",
+      clientId: process.env.AUTHENTIK_CLIENT_ID,
+      clientSecret: process.env.AUTHENTIK_CLIENT_SECRET,
+    },
+    {
+      label: "secondary",
+      issuer: "https://id-backup.example.com/application/o/records/",
+      clientId: process.env.AUTHENTIK_BACKUP_CLIENT_ID,
+      clientSecret: process.env.AUTHENTIK_BACKUP_CLIENT_SECRET,
+    },
+  ],
+  redirectUri: "https://records.example.com/auth/callback",
+  onFailover: (error, instance) =>
+    console.warn(`[auth] ${instance.label} unreachable, trying the next`),
+});
+
+console.log(auth.instances);   // [{ label, issuer }, ...] in the order tried
+```
+
+A single instance written as a one-element array is equivalent, so nothing needs
+rewriting when you add a second.
+
+**How failover behaves**
+
+| Situation | Result |
+|---|---|
+| First instance reachable | Used, no fallback |
+| First unreachable, second reachable | Second used; `onFailover` called with the failed instance |
+| All unreachable | Error naming every instance tried and the last error |
+| Misconfiguration (bad issuer, plain HTTP) | Thrown immediately, no fallback |
+| Callback arrives | Completed against the instance that **started** the sign-in |
+
+**The important rule:** an authorization code can only be exchanged by the
+instance that issued it. The instance label is stored with the flow state, and
+the callback uses that instance rather than falling back again. Falling over
+mid-flow would fail the exchange and look like a login loop.
+
+**What this does not solve.** authentik instances do not share state. If primary
+and secondary hold different users or group memberships, someone who
+authenticates against the secondary may be denied by the application's group
+check. Before relying on failover, make sure both instances have the same user
+accounts and the same group names for the groups your application accepts —
+otherwise failover turns an outage into a confusing "access denied".
+
 ### Framework notes
 
 - **Express** — `createSessionStore(req.session)`, flow id `req.sessionID`
