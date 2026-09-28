@@ -1,0 +1,106 @@
+# authentik-sdk
+
+> Single sign-on against authentik for Node applications. One group per
+> application is the entire access model. Roles are never derived from authentik.
+
+## What this package does
+
+Adds authentik sign-in (OIDC authorization code + PKCE) to a JavaScript or
+TypeScript application, and decides whether the signed-in user may use the
+application at all. It does not manage roles, permissions, or users.
+
+## The access rule, in full
+
+1. Create one group per application in authentik, e.g. `myapp-access`.
+2. If the signed-in user's group list contains that group, they may use the app.
+3. Otherwise they are denied.
+4. Roles are the application's own concern and must not be set from authentik.
+
+## Install
+
+```bash
+npm install github:rmachhh/authentik-sdk
+```
+
+Or pinned:
+
+```json
+{ "dependencies": { "authentik-sdk": "github:rmachhh/authentik-sdk#v0.2.0" } }
+```
+
+`openid-client` is installed automatically. It is only used by the sign-in
+client, which loads lazily, so an application that only needs the access check
+does not load it.
+
+## Minimal integration
+
+`SETUP.md` in this repository contains the complete, exact code to add. Follow it
+literally rather than inventing the wiring.
+
+The shape, for orientation:
+
+```js
+import { createSessionStore, defineAccessPolicy, loadAuthentikClient } from "authentik-sdk";
+
+const { createAuthentikClient } = await loadAuthentikClient();
+const auth = createAuthentikClient({ issuer, clientId, clientSecret, redirectUri });
+const access = defineAccessPolicy({ appGroup: "myapp-access" });
+
+// start:  auth.authorizationUrl(flowId, createSessionStore(session))
+// finish: auth.completeLogin(new URL(req.originalUrl, auth.redirectUri), flowId, store)
+// decide: access.check(claims).allowed
+```
+
+## Required environment
+
+| Variable | Example | Notes |
+|---|---|---|
+| `AUTHENTIK_ISSUER` | `https://id.example.com/application/o/myapp/` | Trailing slash matters |
+| `AUTHENTIK_CLIENT_ID` | `myapp` | From the provider |
+| `AUTHENTIK_CLIENT_SECRET` | | Server-side only, never in a browser bundle |
+| `AUTHENTIK_REDIRECT_URI` | `https://myapp.example.com/auth/callback` | Must match the provider exactly |
+| `APP_GROUP` | `myapp-access` | The group that grants access |
+
+## API
+
+| Function | Purpose |
+|---|---|
+| `createAuthentikClient(options)` via `loadAuthentikClient()` | Sign-in: `authorizationUrl()`, `completeLogin()` |
+| `defineAccessPolicy({ appGroup })` | `check(claims)` returns `{ allowed, groups, roles }` |
+| `createSessionStore(session)` | Store the flow state on a session |
+| `createMemoryStore(holder)` | Store the flow state on any Map-like object |
+| `createEphemeralStore(ttlMs)` | For tests and short-lived processes |
+| `extractGroups(claims)` | The group list, tolerant of claim shapes |
+| `isMemberOfAppGroup(groups, group)` | The access decision alone |
+
+## Failover
+
+Pass `instances: [...]` instead of a single issuer. The first reachable instance
+is used. The instance that started a sign-in is recorded, because a code can only
+be exchanged by its issuer. Configuration errors are not failed over.
+
+## Rules an agent must not break
+
+- Never assign roles or permissions from the groups claim.
+- Never treat an empty group list as "no access" when the user already has local
+  roles; leave existing access alone.
+- Never log tokens, codes or client secrets.
+- Never default `appGroup` to something permissive. No group configured means
+  deny everything.
+- Never send the PKCE verifier, state or nonce to the browser in readable form.
+- Do not use `allowInsecure: true` outside local development.
+
+## Verifying the work
+
+1. `npm test` — 54 tests, no credentials needed.
+2. With credentials, `AUTHENTIK_CLIENT_SECRET=... npm test` adds live checks
+   against a running authentik.
+3. `node examples/integration.js` prints configuration, the PKCE URL, a refused
+   forged callback, and the access decision.
+4. `node examples/express-app.js` runs a complete working application.
+
+## Documentation
+
+- `SETUP.md` — the exact code to add, with a verification step
+- `README.md` — full API reference
+- `AGENTS.md` — conventions for agents contributing to this repository
