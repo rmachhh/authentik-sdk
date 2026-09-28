@@ -45,6 +45,11 @@ export {
   createSessionStore,
 } from "./stores.js";
 export { DEFAULT_SCOPES } from "./scopes.js";
+export {
+  accessConfigFromEnv,
+  connectionConfigFromEnv,
+  ENV_KEYS,
+} from "./config.js";
 
 /**
  * Load the sign-in client.

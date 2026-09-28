@@ -4,6 +4,8 @@
 // ignore this file. Reach for it when one group is not enough: when a system
 // needs to tell administrators from ordinary users while both belong to the app.
 //
+import { accessConfigFromEnv } from "./config.js";
+
 // Kept pure and separate from access.js so a system that does not map roles
 // carries none of this complexity, and so a system that does can test it
 // without a database.
@@ -22,9 +24,15 @@
  * @param {boolean} [options.requireAppGroup]    only map when the user holds
  *        this group (or these groups); use when the map itself is not a
  *        sufficient access decision
+ * @param {string} [options.appRole]             a role granted to anyone in
+ *        the app group, for systems with one role. Defaults to
+ *        AUTHENTIK_APP_ROLE
  * @returns {(groups: string[]) => string[]} role names, in the app's own order
  */
-export function createRoleMapper({ map = {}, roles = [], requireAppGroup } = {}) {
+export function createRoleMapper({ map = {}, roles = [], requireAppGroup, appRole, env } = {}) {
+  // A system with a single role does not need a map at all: name the role
+  // once, in AUTHENTIK_APP_ROLE, and holding the app group grants it.
+  appRole = appRole ?? accessConfigFromEnv(env).appRole;
   const knownRoles = new Set(roles);
   const required = requireAppGroup === undefined
     ? null
@@ -44,6 +52,20 @@ export function createRoleMapper({ map = {}, roles = [], requireAppGroup } = {})
     }
 
     const granted = new Set();
+
+    // A single-role system grants its role to anyone in the application's
+    // group — and to nobody else. Membership is still the gate: granting the
+    // role unconditionally would let a user outside the group receive it.
+    if (appRole && knownRoles.has(appRole)) {
+      const gate = required && required.length > 0
+        ? required
+        : (accessConfigFromEnv(env).appGroup ? [accessConfigFromEnv(env).appGroup] : []);
+
+      if (gate.length > 0 && gate.some((name) => list.includes(name))) {
+        granted.add(appRole);
+      }
+    }
+
     for (const group of list) {
       if (typeof group !== "string") {
         continue;

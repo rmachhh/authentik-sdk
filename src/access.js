@@ -4,8 +4,14 @@
 // user's group list, they may use it. Nothing else is required — no roles, no
 // mapping table, no database.
 //
+import { accessConfigFromEnv } from "./config.js";
+
 // Deliberately pure so it can be unit-tested and reused by any system written
 // in JavaScript, without a framework, a database, or a session.
+//
+// Settings may be passed explicitly or supplied by the environment, so a
+// deployment can configure the same way whatever the runtime. An explicit
+// option always wins.
 
 /**
  * Pull the group list out of OIDC claims, whatever shape the provider used.
@@ -70,16 +76,29 @@ export function isMemberOfAppGroup(groups, requiredGroup) {
  *        optional: turn groups into this application's own roles
  * @returns {{ check: Function, groupsFrom: Function, rolesFrom: Function }}
  */
-export function defineAccessPolicy({ appGroup, mapRoles } = {}) {
+export function defineAccessPolicy({ appGroup, appRole, mapRoles, env } = {}) {
+  // Fall back to the environment for anything not passed explicitly.
+  const fromEnv = accessConfigFromEnv(env);
+  appGroup = appGroup ?? fromEnv.appGroup;
+  appRole = appRole ?? fromEnv.appRole;
+
   if (!appGroup || (Array.isArray(appGroup) && appGroup.length === 0)) {
     throw new Error(
-      "defineAccessPolicy requires appGroup — the authentik group that grants access",
+      "defineAccessPolicy requires appGroup — the authentik group that grants access. "
+      + "Pass it directly or set AUTHENTIK_APP_GROUP.",
     );
   }
 
   return {
     /** The group(s) this application is guarded by. */
     appGroup,
+
+    /**
+     * The application's own role, when it uses only one. Reported rather
+     * than assigned: roles belong to the application, never to authentik.
+     * Set with AUTHENTIK_APP_ROLE.
+     */
+    appRole: appRole ?? null,
 
     /** Groups named in the claims, unfiltered. */
     groupsFrom(claims) {
@@ -95,7 +114,7 @@ export function defineAccessPolicy({ appGroup, mapRoles } = {}) {
       const allowed = isMemberOfAppGroup(groups, appGroup);
       const roles = typeof mapRoles === "function" && allowed
         ? (mapRoles(groups) ?? [])
-        : [];
+        : (allowed && appRole ? [appRole] : []);
       return { allowed, groups, roles };
     },
 
