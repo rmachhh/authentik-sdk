@@ -79,6 +79,16 @@ Pass `instances: [...]` instead of a single issuer. The first reachable instance
 is used. The instance that started a sign-in is recorded, because a code can only
 be exchanged by its issuer. Configuration errors are not failed over.
 
+## Importing users
+
+`createAuthentikAdminClient` moves an application's users into authentik. It is
+repeatable: an existing user is not recreated, and membership is only written
+when missing. It never deletes anyone, never sets a password, and never mirrors
+roles. Call `preview(users)` first — it writes nothing.
+
+Needs an admin API token (`AUTHENTIK_ADMIN_TOKEN`), separate from the sign-in
+credentials because it is far more powerful.
+
 ## Rules an agent must not break
 
 - Never assign roles or permissions from the groups claim.

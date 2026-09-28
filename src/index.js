@@ -39,6 +39,10 @@ export {
   isMemberOfAppGroup,
 } from "./access.js";
 export { createRoleMapper, pickPrimaryRole } from "./roles.js";
+// The admin client signs nobody in: it requires an API token, and exists
+// only for importing users. Exported eagerly because it does not pull in
+// openid-client.
+export { createAuthentikAdminClient, AuthentikImportError } from "./admin.js";
 export {
   createEphemeralStore,
   createMemoryStore,
