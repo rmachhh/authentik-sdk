@@ -44,6 +44,11 @@ AUTHENTIK_CLIENT_ID=myapp
 AUTHENTIK_CLIENT_SECRET=
 AUTHENTIK_REDIRECT_URI=http://localhost:3000/auth/callback
 APP_GROUP=myapp-access
+
+# Only for importing existing users (step 7). A far more powerful credential
+# than the sign-in secret: it can create users. Keep it separate.
+AUTHENTIK_ADMIN_URL=https://id.example.com
+AUTHENTIK_ADMIN_TOKEN=
 ```
 
 Add `AUTHENTIK_CLIENT_SECRET` to `.gitignore`'d configuration only. Never commit
@@ -150,6 +155,48 @@ Do these in order and fix each before moving on.
    `AUTHENTIK_REDIRECT_URI` and the provider's registered URI differ.
 
 Report which of the six steps succeeded, and include any error message verbatim.
+
+---
+
+## Step 7 (optional) — Import existing users
+
+Only needed when the application already has users and authentik has none. A new
+application can skip this and let accounts be created as people join.
+
+```js
+import { createAuthentikAdminClient } from "authentik-sdk";
+
+const admin = createAuthentikAdminClient({
+  baseUrl: process.env.AUTHENTIK_ADMIN_URL,
+  token: process.env.AUTHENTIK_ADMIN_TOKEN,
+  appGroup: process.env.APP_GROUP,
+});
+
+const users = await loadUsersFromYourDatabase();   // [{ email, name }]
+
+// Always preview first. This writes nothing.
+const preview = await admin.preview(users);
+console.log(preview.summary);      // { total, create, "already present" }
+console.log(preview.users);        // per user: action = "create" | "add to group"
+
+// Then, once the preview looks right:
+const result = await admin.import(users);
+console.log(result.summary);       // { total, created, "already present", "group additions", failed }
+```
+
+**Rules this import follows. Do not change them:**
+
+- **Never deletes.** Removing a user from a shared identity provider affects
+  every connected system, so it stays a deliberate act.
+- **Never sets a password.** It establishes who exists, not how they sign in.
+- **Never mirrors roles.** Every imported user joins the one access group.
+- **Repeatable.** An existing user is not recreated and membership is only
+  written when missing, so a second run is safe.
+- **A failure is per user.** One bad address is reported in the results rather
+  than abandoning the rest.
+
+**Verify:** run the import twice. The second run must report `created: 0` and
+`group additions: 0`. If it reports more, the import is not reconciling.
 
 ---
 
